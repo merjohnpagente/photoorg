@@ -60,7 +60,7 @@ main{margin-top:24px}
 .dup .photos{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
 .dup .ph{background:var(--bg)}
 .hd{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px}
-.pick{cursor:pointer}
+.pick{cursor:pointer}.sel{width:100%;margin-top:6px;padding:4px 6px;font:inherit;font-size:.74rem;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px}
 .empty{padding:56px 20px;text-align:center;color:var(--mute);border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 .empty b{display:block;color:var(--ink);font-size:1.05rem;margin-bottom:4px}
 #toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,24px);opacity:0;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;font-size:.88rem;transition:.25s;pointer-events:none;max-width:90vw}
@@ -72,7 +72,7 @@ main{margin-top:24px}
 <body>
 <div class="wrap">
   <header>
-    <div><h1>Photo Organizer</h1><p class="sub">Sort by date or camera. Find duplicates. All in your browser.</p></div>
+    <div><h1>Photo Organizer</h1><p class="sub">Sort by date, camera or what is in the photo. Find duplicates. All in your browser.</p></div>
     <div id="stats"></div>
   </header>
 
@@ -94,9 +94,11 @@ main{margin-top:24px}
         <button data-mode="month" aria-pressed="true">Month</button>
         <button data-mode="day" aria-pressed="false">Day</button>
         <button data-mode="camera" aria-pressed="false">Camera</button>
+        <button data-mode="content" aria-pressed="false">Content</button>
       </div>
     </div>
     <div class="right">
+      <button class="btn" id="ai">Identify photos</button>
       <button class="btn pri" id="save">Download as folder</button>
       <button class="btn" id="zip">Download as ZIP</button>
       <button class="btn" id="csv">Export CSV</button>
@@ -138,16 +140,16 @@ function makeZip(list){
   end.setUint32(0,0x06054b50,true);end.setUint16(8,list.length,true);end.setUint16(10,list.length,true);end.setUint32(12,cs,true);end.setUint32(16,off,true);
   return new Blob([...parts,...cen,new Uint8Array(end.buffer)],{type:'application/zip'});
 }
-const topName=()=>'Photos by '+({month:'Month',day:'Day',camera:'Camera'}[S.mode]);
+const topName=()=>'Photos by '+({month:'Month',day:'Day',camera:'Camera',content:'Content'}[S.mode]);
 function entryName(it,used){let n=folderOf(it).path+'/'+it.name;if(used.has(n))n=folderOf(it).path+'/'+it.id+'-'+it.name;used.add(n);return n}
 let keepFirst={}; // dup group signature -> preferred id
 
 /* ---------- storage ---------- */
-function load(){try{const r=localStorage.getItem(KEY);if(r){const d=JSON.parse(r);S.items=d.items||[];S.mode=d.mode||'month'}}catch(e){}}
+function load(){try{const r=localStorage.getItem(KEY);if(r){const d=JSON.parse(r);S.items=d.items||[];S.mode=d.mode||'month';S.ai=!!d.ai}}catch(e){}}
 function save(){
-  try{localStorage.setItem(KEY,JSON.stringify({items:S.items,mode:S.mode}))}
+  try{localStorage.setItem(KEY,JSON.stringify({items:S.items,mode:S.mode,ai:S.ai}))}
   catch(e){
-    try{localStorage.setItem(KEY,JSON.stringify({items:S.items.map(i=>({...i,thumb:''})),mode:S.mode}));toast('Storage full. Saved without thumbnails.')}
+    try{localStorage.setItem(KEY,JSON.stringify({items:S.items.map(i=>({...i,thumb:''})),mode:S.mode,ai:S.ai}));toast('Storage full. Saved without thumbnails.')}
     catch(e2){toast('Could not save to this browser.')}
   }
 }
@@ -237,12 +239,14 @@ async function addFiles(list){
   }
   p.style.display='none';bar.style.width='0';
   save();render();toast(`Added ${added} photo${added===1?'':'s'}.`);
+  if(S.ai)runAI();
 }
 
 /* ---------- grouping ---------- */
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 function folderOf(it){
   const d=it.date;
+  if(S.mode==='content'){const c=it.cat||'Not identified';return it.cat==='Food'&&it.sub?{key:'Food: '+it.sub,path:'Food/'+it.sub}:{key:c,path:c}}
   if(S.mode==='camera'){const c=it.cam||'Unknown camera';return{key:c,path:c.replace(/[\\/:*?"<>|]/g,'_')}}
   if(S.mode==='day')return{key:d.slice(0,10),path:d.slice(0,4)+'/'+d.slice(0,10)};
   const m=+d.slice(5,7);return{key:`${MONTHS[m-1]} ${d.slice(0,4)}`,path:d.slice(0,4)+'/'+d.slice(5,7)+' '+MONTHS[m-1]}
@@ -252,7 +256,7 @@ function folders(){
   for(const it of S.items){const f=folderOf(it);if(!map.has(f.key))map.set(f.key,{key:f.key,path:f.path,items:[]});map.get(f.key).items.push(it)}
   const arr=[...map.values()];
   arr.forEach(f=>f.items.sort((a,b)=>a.date<b.date?-1:1));
-  if(S.mode==='camera')arr.sort((a,b)=>b.items.length-a.items.length);
+  if(S.mode==='camera'||S.mode==='content')arr.sort((a,b)=>b.items.length-a.items.length);
   else arr.sort((a,b)=>a.items[0].date<b.items[0].date?1:-1);
   return arr;
 }
@@ -286,7 +290,9 @@ function tile(it,tag=''){
     <button class="x" data-act="del" data-id="${it.id}" aria-label="Remove ${esc(it.name)}">×</button>
     <p class="n" title="${esc(it.name)}">${esc(it.name)}</p>
     <p class="m">${fmtDate(it.date)} · ${fmtSize(it.size)}</p>
-    <p class="m">${esc(it.cam||'Unknown camera')}</p></div>`;
+    <p class="m">${esc(it.cam||'Unknown camera')}</p>
+    ${it.sub?`<p class="m">${esc(it.sub)}${it.conf&&!it.manual?' · '+Math.round(it.conf*100)+'%':''}</p>`:''}
+    <select class="sel" data-sel="${it.id}" aria-label="What is in this photo" title="${it.conf&&!it.manual?'Confidence '+Math.round(it.conf*100)+'%':''}">${['Not identified',...Object.keys(CATS),'Other'].map(c=>`<option${(it.cat||'Not identified')===c?' selected':''}>${c}</option>`).join('')}</select></div>`;
 }
 const empty=(t,s)=>`<div class="empty"><b>${t}</b>${s}</div>`;
 function render(){
@@ -304,7 +310,8 @@ function render(){
       h=`<div class="crumb"><button class="btn" data-act="back">Back</button><div><div class="fname">${esc(open.key)} <small>${open.items.length} photos</small></div><div class="path">${esc(open.path)}/</div></div></div><div class="photos">${open.items.map(i=>tile(i)).join('')}</div>`;
     }else{
       S.open=null;
-      h=`<div class="folders">${fl.map(f=>`<button class="folder" data-act="open" data-key="${esc(f.key)}"><div class="collage">${[0,1,2,3].map(k=>f.items[k]&&f.items[k].thumb?`<img src="${f.items[k].thumb}" alt="">`:'<span></span>').join('')}</div><div class="fname">${esc(f.key)} <small>${f.items.length}</small></div><div class="path">${esc(f.path)}/</div></button>`).join('')}</div>`;
+      const un=S.items.filter(i=>!i.cat).length;
+      h=(S.mode==='content'&&un?`<p class="hint" style="margin:0 0 12px">${un} photo${un===1?'':'s'} not identified yet. Press “Identify photos” to sort them by what they show.</p>`:'')+`<div class="folders">${fl.map(f=>`<button class="folder" data-act="open" data-key="${esc(f.key)}"><div class="collage">${[0,1,2,3].map(k=>f.items[k]&&f.items[k].thumb?`<img src="${f.items[k].thumb}" alt="">`:'<span></span>').join('')}</div><div class="fname">${esc(f.key)} <small>${f.items.length}</small></div><div class="path">${esc(f.path)}/</div></button>`).join('')}</div>`;
     }
   }else if(S.tab==='dups'){
     if(!dg.length)h=empty('No duplicates found','Exact copies and near-identical shots show up here.');
@@ -320,6 +327,7 @@ function render(){
 /* ---------- actions ---------- */
 function del(ids){const s=new Set(ids);S.items=S.items.filter(i=>!s.has(i.id));ids.forEach(i=>{delete files[i];idbDel(i)});save();render()}
 document.addEventListener('click',e=>{
+  if(e.target.closest('select'))return;
   const t=e.target.closest('[data-act]');if(!t)return;
   const a=t.dataset.act;
   if(a==='dl'){e.stopPropagation();dlOne(t.dataset.id)}else if(a==='del'){e.stopPropagation();del([t.dataset.id])}
@@ -364,6 +372,59 @@ $('#zip').onclick=async()=>{
   dlBlob(makeZip(list),'photos-by-'+S.mode+'.zip');
   toast(`ZIP ready with ${list.length} photo${list.length===1?'':'s'}.`);
 };
+/* ---------- identify photos (CLIP model, runs in the browser) ---------- */
+const CATS={'Food':'food or drinks on a table','People':'a person, a portrait or a group of people','Pets and animals':'a pet or an animal','Nature and landscape':'a landscape, mountains, sea, beach, sky or forest','Flowers and plants':'flowers or plants','Buildings and places':'a building, a house, a street or a city','Vehicles':'a car, motorcycle, bus, boat or airplane','Screenshots and documents':'a screenshot of a phone screen, a document or text','Events and parties':'a party, wedding or celebration','Art and drawings':'a drawing, painting, cartoon or illustration','Objects and products':'an everyday object, gadget or product'};
+const DISHES=('Adobo|Filipino chicken or pork adobo in soy sauce;Sinigang|sinigang, sour tamarind soup;Lechon|roasted pig lechon;Pancit|pancit stir-fried noodles;Sisig|sizzling sisig;Kare-kare|kare-kare, oxtail peanut stew;Halo-halo|halo-halo shaved ice dessert;Lumpia|fried spring rolls;Fried chicken|fried chicken;Rice meal|a plate of steamed rice with viand;Burger|a burger;Pizza|a pizza;Pasta|spaghetti or pasta;Sushi|sushi or sashimi;Ramen|ramen noodle soup;Steak|a steak;Salad|a salad;Soup|a bowl of soup;Sandwich|a sandwich;French fries|french fries;Cake|a cake;Ice cream|ice cream;Bread|bread or pastry;Fruits|fresh fruits;Coffee|a cup of coffee;Milk tea|milk tea or a cold drink;Seafood|shrimp, crab or seafood;Grilled meat|grilled barbecue meat;Fish|a cooked fish;Egg dish|eggs;Noodles|a bowl of noodles;Dumplings|dumplings;Donuts|donuts;Cookies|cookies;Chocolate|chocolate;Tacos|tacos or burritos;Pancakes|pancakes or waffles;Curry|curry;Kakanin|Filipino rice cake, kakanin or bibingka;Hotdog|hot dogs or sausages;Vegetables|cooked vegetables').split(';').map(x=>x.split('|'));
+let AI=null;
+function setProg(p){const w=$('#prog');w.style.display=p<0||p>=100?'none':'block';w.firstElementChild.style.width=Math.max(p,0)+'%'}
+const unit=v=>{let n=0;for(let i=0;i<v.length;i++)n+=v[i]*v[i];n=Math.sqrt(n)||1;return Array.from(v,x=>x/n)};
+const dot=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s};
+const softmax=(e,T)=>{const l=T.map(t=>100*dot(e,t)),m=Math.max(...l),x=l.map(v=>Math.exp(v-m)),s=x.reduce((a,b)=>a+b,0);return x.map(v=>v/s)};
+const argmax=a=>a.indexOf(Math.max(...a));
+async function loadAI(){
+  if(AI)return AI;
+  toast('Downloading the AI model (about 90 MB, only the first time)…');
+  const T=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2');
+  T.env.allowLocalModels=false;
+  const M='Xenova/clip-vit-base-patch32',cb={progress_callback:p=>{if(p.status==='progress')setProg(p.progress)}};
+  const [tok,tm,proc,vm]=await Promise.all([T.AutoTokenizer.from_pretrained(M),T.CLIPTextModelWithProjection.from_pretrained(M,cb),T.AutoProcessor.from_pretrained(M),T.CLIPVisionModelWithProjection.from_pretrained(M,cb)]);
+  const embed=async list=>{const {text_embeds}=await tm(tok(list.map(x=>'a photo of '+x),{padding:true,truncation:true}));const d=text_embeds.data,k=d.length/list.length;return list.map((_,i)=>unit(d.slice(i*k,(i+1)*k)))};
+  const catNames=Object.keys(CATS),catE=await embed(Object.values(CATS)),dishE=await embed(DISHES.map(d=>d[1]));
+  const vec=async u=>{const img=await T.RawImage.read(u);const {image_embeds}=await vm(await proc(img));return unit(image_embeds.data)};
+  AI={async identify(it){
+    const f=await getFile(it.id);let e;
+    if(f){const u=URL.createObjectURL(f);try{e=await vec(u)}catch(x){}finally{URL.revokeObjectURL(u)}}
+    if(!e&&it.thumb)e=await vec(it.thumb);
+    if(!e)throw new Error('unreadable');
+    const p=softmax(e,catE),i=argmax(p),r={cat:p[i]>=.4?catNames[i]:'Other',conf:p[i],sub:''};
+    if(r.cat==='Food'){const q=softmax(e,dishE),j=argmax(q);if(q[j]>=.3){r.sub=DISHES[j][0];r.conf=q[j]}}
+    return r;
+  }};
+  return AI;
+}
+async function runAI(){
+  if(runAI.busy)return;runAI.busy=true;
+  try{
+    const todo=S.items.filter(i=>!i.cat&&!i.manual);
+    if(!todo.length){toast('All photos are already identified.');return}
+    const ai=await loadAI();setProg(-1);
+    for(let i=0;i<todo.length;i++){
+      toast(`Identifying ${i+1} of ${todo.length}…`);
+      try{Object.assign(todo[i],await ai.identify(todo[i]))}catch(e){todo[i].cat='Other';todo[i].conf=0}
+      setProg((i+1)/todo.length*100);
+      if(i%5===4){save();render()}
+      await new Promise(r=>setTimeout(r));
+    }
+    S.ai=true;save();render();toast('Done. Open the Content view to see photos by what they show.');
+  }catch(e){toast('Could not load the AI model. Check your internet connection.')}
+  finally{runAI.busy=false;setProg(-1)}
+}
+document.addEventListener('change',e=>{
+  const t=e.target.closest&&e.target.closest('[data-sel]');if(!t)return;
+  const it=S.items.find(i=>i.id===t.dataset.sel);if(!it)return;
+  it.cat=t.value==='Not identified'?'':t.value;if(it.cat!=='Food')it.sub='';it.manual=true;save();render();
+});
+$('#ai').onclick=runAI;
 const drop=$('#drop'),inp=$('#file');
 drop.onclick=()=>inp.click();
 drop.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();inp.click()}};
