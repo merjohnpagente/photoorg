@@ -60,7 +60,7 @@ main{margin-top:24px}
 .dup .photos{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
 .dup .ph{background:var(--bg)}
 .hd{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px}
-.pick{cursor:pointer}.sel{width:100%;margin-top:6px;padding:4px 6px;font:inherit;font-size:.74rem;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px}
+.pick{cursor:pointer}.chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}.cb{border:1px solid var(--line);background:none;border-radius:999px;padding:5px 12px;font-size:.82rem;color:var(--mute)}.cb[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}.sel{width:100%;margin-top:6px;padding:4px 6px;font:inherit;font-size:.74rem;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px}
 .empty{padding:56px 20px;text-align:center;color:var(--mute);border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 .empty b{display:block;color:var(--ink);font-size:1.05rem;margin-bottom:4px}
 #toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,24px);opacity:0;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;font-size:.88rem;transition:.25s;pointer-events:none;max-width:90vw}
@@ -113,7 +113,7 @@ main{margin-top:24px}
 const KEY='photoorg:v1';
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let S={items:[],mode:'month',tab:'folders',open:null};
+let S={items:[],mode:'month',tab:'folders',open:null,sub:''};
 const files={}; // id -> File cache; originals live in IndexedDB
 let _db;const db=()=>_db||(_db=new Promise((res,rej)=>{const r=indexedDB.open('photoorg',1);r.onupgradeneeded=()=>r.result.createObjectStore('files');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}));
 async function idb(mode,fn){try{const d=await db();return await new Promise((res,rej)=>{const tx=d.transaction('files',mode),rq=fn(tx.objectStore('files'));tx.oncomplete=()=>res(rq&&rq.result);tx.onerror=()=>rej(tx.error)})}catch(e){return null}}
@@ -141,11 +141,11 @@ function makeZip(list){
   return new Blob([...parts,...cen,new Uint8Array(end.buffer)],{type:'application/zip'});
 }
 const topName=()=>'Photos by '+({month:'Month',day:'Day',camera:'Camera',content:'Content'}[S.mode]);
-function entryName(it,used){let n=folderOf(it).path+'/'+it.name;if(used.has(n))n=folderOf(it).path+'/'+it.id+'-'+it.name;used.add(n);return n}
+function entryName(it,used,strip){let dir=folderOf(it).path;if(strip!=null)dir=dir.slice(strip.length).replace(/^\//,'');const pre=dir?dir+'/':'';let n=pre+it.name;if(used.has(n))n=pre+it.id+'-'+it.name;used.add(n);return n}
 let keepFirst={}; // dup group signature -> preferred id
 
 /* ---------- storage ---------- */
-function load(){try{const r=localStorage.getItem(KEY);if(r){const d=JSON.parse(r);S.items=d.items||[];S.mode=d.mode||'month';S.ai=!!d.ai}}catch(e){}}
+function load(){try{const r=localStorage.getItem(KEY);if(r){const d=JSON.parse(r);S.items=d.items||[];S.mode=d.mode||'month';S.ai=!!d.ai;S.items.forEach(i=>{if(i.cat==='Nature and landscape'||i.cat==='Buildings and places'){i.cat='';i.sub=''}})}}catch(e){}}
 function save(){
   try{localStorage.setItem(KEY,JSON.stringify({items:S.items,mode:S.mode,ai:S.ai}))}
   catch(e){
@@ -246,14 +246,14 @@ async function addFiles(list){
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 function folderOf(it){
   const d=it.date;
-  if(S.mode==='content'){const c=it.cat||'Not identified';return{key:c,path:c}}
+  if(S.mode==='content'){const c=it.cat||'Not identified';return{key:c,path:c+(it.sub?'/'+it.sub:'')}}
   if(S.mode==='camera'){const c=it.cam||'Unknown camera';return{key:c,path:c.replace(/[\\/:*?"<>|]/g,'_')}}
   if(S.mode==='day')return{key:d.slice(0,10),path:d.slice(0,4)+'/'+d.slice(0,10)};
   const m=+d.slice(5,7);return{key:`${MONTHS[m-1]} ${d.slice(0,4)}`,path:d.slice(0,4)+'/'+d.slice(5,7)+' '+MONTHS[m-1]}
 }
 function folders(){
   const map=new Map();
-  for(const it of S.items){const f=folderOf(it);if(!map.has(f.key))map.set(f.key,{key:f.key,path:f.path,items:[]});map.get(f.key).items.push(it)}
+  for(const it of S.items){const f=folderOf(it);if(!map.has(f.key))map.set(f.key,{key:f.key,path:S.mode==='content'?f.key:f.path,items:[]});map.get(f.key).items.push(it)}
   const arr=[...map.values()];
   arr.forEach(f=>f.items.sort((a,b)=>a.date<b.date?-1:1));
   if(S.mode==='camera'||S.mode==='content')arr.sort((a,b)=>b.items.length-a.items.length);
@@ -307,7 +307,10 @@ function render(){
   else if(S.tab==='folders'){
     const open=S.open&&fl.find(f=>f.key===S.open);
     if(open){
-      h=`<div class="crumb"><button class="btn" data-act="back">Back</button><div><div class="fname">${esc(open.key)} <small>${open.items.length} photos</small></div><div class="path">${esc(open.path)}/</div></div></div><div class="photos">${open.items.map(i=>tile(i)).join('')}</div>`;
+      const subs={};open.items.forEach(i=>{if(i.sub)subs[i.sub]=(subs[i.sub]||0)+1});
+      const list=S.sub&&subs[S.sub]?open.items.filter(i=>i.sub===S.sub):open.items;
+      const chips=Object.keys(subs).length>1?`<div class="chips"><button class="cb" data-act="sub" data-sub="" aria-pressed="${!S.sub||!subs[S.sub]}">All ${open.items.length}</button>${Object.entries(subs).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<button class="cb" data-act="sub" data-sub="${esc(k)}" aria-pressed="${S.sub===k}">${esc(k)} ${v}</button>`).join('')}</div>`:'';
+      h=`<div class="crumb"><button class="btn" data-act="back">Back</button><div><div class="fname">${esc(open.key)} <small>${open.items.length} photos</small></div><div class="path">${esc(open.path)}/</div></div><div class="right" style="margin-left:auto"><button class="btn pri" data-act="dlfolder">Download this folder</button><button class="btn" data-act="zipfolder">ZIP</button></div></div>${chips}<div class="photos">${list.map(i=>tile(i)).join('')}</div>`;
     }else{
       S.open=null;
       const un=S.items.filter(i=>!i.cat).length;
@@ -331,14 +334,16 @@ document.addEventListener('click',e=>{
   const t=e.target.closest('[data-act]');if(!t)return;
   const a=t.dataset.act;
   if(a==='dl'){e.stopPropagation();dlOne(t.dataset.id)}else if(a==='del'){e.stopPropagation();del([t.dataset.id])}
-  else if(a==='open'){S.open=t.dataset.key;render();window.scrollTo({top:0,behavior:'smooth'})}
-  else if(a==='back'){S.open=null;render()}
+  else if(a==='open'){S.open=t.dataset.key;S.sub='';render();window.scrollTo({top:0,behavior:'smooth'})}
+  else if(a==='sub'){S.sub=t.dataset.sub;render()}
+  else if(a==='dlfolder'||a==='zipfolder'){const o=folders().find(f=>f.key===S.open);if(o)(a==='dlfolder'?saveFolder:zipItems)(o.items,o.path.split('/').pop(),o.path)}
+  else if(a==='back'){S.open=null;S.sub='';render()}
   else if(a==='keep'){const g=window._dg[+t.dataset.g];keepFirst[g.sig]=t.dataset.id;render()}
   else if(a==='cleangroup'){const g=window._dg[+t.dataset.g];del(g.items.slice(1).map(i=>i.id));toast('Removed extras from the list.')}
   else if(a==='cleanall'){const ids=window._dg.flatMap(g=>g.items.slice(1).map(i=>i.id));del(ids);toast(`Removed ${ids.length} duplicates from the list.`)}
 });
-$('#tabs').onclick=e=>{const b=e.target.closest('button');if(b){S.tab=b.dataset.tab;S.open=null;render()}};
-$('#modes').onclick=e=>{const b=e.target.closest('button');if(b){S.mode=b.dataset.mode;S.open=null;save();render()}};
+$('#tabs').onclick=e=>{const b=e.target.closest('button');if(b){S.tab=b.dataset.tab;S.open=null;S.sub='';render()}};
+$('#modes').onclick=e=>{const b=e.target.closest('button');if(b){S.mode=b.dataset.mode;S.open=null;S.sub='';save();render()}};
 $('#clear').onclick=()=>{if(S.items.length&&confirm('Remove all photos from this organizer? Your original files on disk are not touched.')){S.items=[];for(const k in files)delete files[k];idbClear();save();render()}};
 $('#csv').onclick=()=>{
   if(!S.items.length)return toast('Add photos first.');
@@ -346,35 +351,40 @@ $('#csv').onclick=()=>{
   const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='photo-plan.csv';a.click();
 };
-$('#save').onclick=async()=>{
-  if(!S.items.length)return toast('Add photos first.');
-  if(!window.showDirectoryPicker){toast('This browser cannot create folders. Downloading a ZIP instead.');return $('#zip').click()}
+async function saveFolder(items,top,strip){
+  if(!items.length)return toast('Add photos first.');
+  if(!window.showDirectoryPicker){toast('This browser cannot create folders. Downloading a ZIP instead.');return zipItems(items,top,strip)}
   try{
     const base=await showDirectoryPicker({mode:'readwrite'});
-    const root=await base.getDirectoryHandle(topName(),{create:true});
+    const root=await base.getDirectoryHandle(top,{create:true});
     const used=new Set();let n=0;
-    for(const it of S.items){
+    for(const it of items){
       const f=await getFile(it.id);if(!f)continue;
-      const parts=entryName(it,used).split('/'),name=parts.pop();
+      const parts=entryName(it,used,strip).split('/'),name=parts.pop();
       let dir=root;for(const part of parts)dir=await dir.getDirectoryHandle(part,{create:true});
       const w=await (await dir.getFileHandle(name,{create:true})).createWritable();
       await w.write(f);await w.close();n++;
     }
-    toast(`Saved ${n} photo${n===1?'':'s'} in the folder “${topName()}”.`);
+    toast(`Saved ${n} photo${n===1?'':'s'} in the folder “${top}”.`);
   }catch(e){if(e.name!=='AbortError')toast('Could not write to that folder.')}
-};
-$('#zip').onclick=async()=>{
-  if(!S.items.length)return toast('Add photos first.');
+}
+async function zipItems(items,top,strip){
+  if(!items.length)return toast('Add photos first.');
   toast('Building ZIP…');
   const used=new Set(),list=[];
-  for(const it of S.items){const f=await getFile(it.id);if(!f)continue;list.push({name:topName()+'/'+entryName(it,used),data:new Uint8Array(await f.arrayBuffer()),date:new Date(it.date)})}
+  for(const it of items){const f=await getFile(it.id);if(!f)continue;list.push({name:top+'/'+entryName(it,used,strip),data:new Uint8Array(await f.arrayBuffer()),date:new Date(it.date)})}
   if(!list.length)return toast('No original files are stored yet.');
-  dlBlob(makeZip(list),'photos-by-'+S.mode+'.zip');
+  dlBlob(makeZip(list),top+'.zip');
   toast(`ZIP ready with ${list.length} photo${list.length===1?'':'s'}.`);
-};
+}
+$('#save').onclick=()=>saveFolder(S.items,topName());
+$('#zip').onclick=()=>zipItems(S.items,topName());
 /* ---------- identify photos (CLIP model, runs in the browser) ---------- */
-const CATS={'Food':'food or drinks on a table','People':'a person, a portrait or a group of people','Pets and animals':'a pet or an animal','Nature and landscape':'a landscape, mountains, sea, beach, sky or forest','Flowers and plants':'flowers or plants','Buildings and places':'a building, a house, a street or a city','Vehicles':'a car, motorcycle, bus, boat or airplane','Screenshots and documents':'a screenshot of a phone screen, a document or text','Events and parties':'a party, wedding or celebration','Art and drawings':'a drawing, painting, cartoon or illustration','Objects and products':'an everyday object, gadget or product'};
-const DISHES=('Adobo|Filipino chicken or pork adobo in soy sauce;Sinigang|sinigang, sour tamarind soup;Lechon|roasted pig lechon;Pancit|pancit stir-fried noodles;Sisig|sizzling sisig;Kare-kare|kare-kare, oxtail peanut stew;Halo-halo|halo-halo shaved ice dessert;Lumpia|fried spring rolls;Fried chicken|fried chicken;Rice meal|a plate of steamed rice with viand;Burger|a burger;Pizza|a pizza;Pasta|spaghetti or pasta;Sushi|sushi or sashimi;Ramen|ramen noodle soup;Steak|a steak;Salad|a salad;Soup|a bowl of soup;Sandwich|a sandwich;French fries|french fries;Cake|a cake;Ice cream|ice cream;Bread|bread or pastry;Fruits|fresh fruits;Coffee|a cup of coffee;Milk tea|milk tea or a cold drink;Seafood|shrimp, crab or seafood;Grilled meat|grilled barbecue meat;Fish|a cooked fish;Egg dish|eggs;Noodles|a bowl of noodles;Dumplings|dumplings;Donuts|donuts;Cookies|cookies;Chocolate|chocolate;Tacos|tacos or burritos;Pancakes|pancakes or waffles;Curry|curry;Kakanin|Filipino rice cake, kakanin or bibingka;Hotdog|hot dogs or sausages;Vegetables|cooked vegetables').split(';').map(x=>x.split('|'));
+const CATS={'Food':'food or drinks on a table','People':'a person, a portrait or a group of people','Pets and animals':'a pet or an animal','Places':'a place or scenery such as a beach, mountain, forest, waterfall, city, street or building','Flowers and plants':'flowers or plants','Vehicles':'a car, motorcycle, bus, boat or airplane','Screenshots and documents':'a screenshot of a phone screen, a document or text','Events and parties':'a party, wedding or celebration','Art and drawings':'a drawing, painting, cartoon or illustration','Objects and products':'an everyday object, gadget or product'};
+const DISHES0=('Adobo|Filipino chicken or pork adobo in soy sauce;Sinigang|sinigang, sour tamarind soup;Lechon|roasted pig lechon;Pancit|pancit stir-fried noodles;Sisig|sizzling sisig;Kare-kare|kare-kare, oxtail peanut stew;Halo-halo|halo-halo shaved ice dessert;Lumpia|fried spring rolls;Fried chicken|fried chicken;Rice meal|a plate of steamed rice with viand;Burger|a burger;Pizza|a pizza;Pasta|spaghetti or pasta;Sushi|sushi or sashimi;Ramen|ramen noodle soup;Steak|a steak;Salad|a salad;Soup|a bowl of soup;Sandwich|a sandwich;French fries|french fries;Cake|a cake;Ice cream|ice cream;Bread|bread or pastry;Fruits|fresh fruits;Coffee|a cup of coffee;Milk tea|milk tea or a cold drink;Seafood|shrimp, crab or seafood;Grilled meat|grilled barbecue meat;Fish|a cooked fish;Egg dish|eggs;Noodles|a bowl of noodles;Dumplings|dumplings;Donuts|donuts;Cookies|cookies;Chocolate|chocolate;Tacos|tacos or burritos;Pancakes|pancakes or waffles;Curry|curry;Kakanin|Filipino rice cake, kakanin or bibingka;Hotdog|hot dogs or sausages;Vegetables|cooked vegetables').split(';').map(x=>x.split('|'));
+const DISHES=DISHES0;const mk=t=>t.split(';').map(x=>x.split('|'));
+const PLACES=mk('Beach|a beach with sand and sea;Mountain|mountains or hills;Forest|a forest or trees;Waterfall|a waterfall or river;Sea or lake|a sea, ocean or lake view;Sunset|a sunset or sunrise sky;City|a city skyline or busy streets;Building|a building or landmark;Church|a church or cathedral;Resort or pool|a swimming pool or resort;Island|a tropical island or boat on the sea;Park or garden|a park or garden;Countryside|a rice field or countryside road');
+const ANIMALS=mk('Dog|a dog;Cat|a cat;Bird|a bird;Fish|a fish or aquarium;Farm animal|a cow, horse, goat or chicken;Wild animal|a wild animal');
 let AI=null;
 function setProg(p){const w=$('#prog');w.style.display=p<0||p>=100?'none':'block';w.firstElementChild.style.width=Math.max(p,0)+'%'}
 const unit=v=>{let n=0;for(let i=0;i<v.length;i++)n+=v[i]*v[i];n=Math.sqrt(n)||1;return Array.from(v,x=>x/n)};
@@ -389,7 +399,8 @@ async function loadAI(){
   const M='Xenova/clip-vit-base-patch32',cb={progress_callback:p=>{if(p.status==='progress')setProg(p.progress)}};
   const [tok,tm,proc,vm]=await Promise.all([T.AutoTokenizer.from_pretrained(M),T.CLIPTextModelWithProjection.from_pretrained(M,cb),T.AutoProcessor.from_pretrained(M),T.CLIPVisionModelWithProjection.from_pretrained(M,cb)]);
   const embed=async list=>{const {text_embeds}=await tm(tok(list.map(x=>'a photo of '+x),{padding:true,truncation:true}));const d=text_embeds.data,k=d.length/list.length;return list.map((_,i)=>unit(d.slice(i*k,(i+1)*k)))};
-  const catNames=Object.keys(CATS),catE=await embed(Object.values(CATS)),dishE=await embed(DISHES.map(d=>d[1]));
+  const catNames=Object.keys(CATS),catE=await embed(Object.values(CATS)),subL={Food:DISHES,Places:PLACES,'Pets and animals':ANIMALS},subE={};
+  for(const k in subL)subE[k]=await embed(subL[k].map(d=>d[1]));
   const vec=async u=>{const img=await T.RawImage.read(u);const {image_embeds}=await vm(await proc(img));return unit(image_embeds.data)};
   AI={async identify(it){
     const f=await getFile(it.id);let e;
@@ -397,7 +408,7 @@ async function loadAI(){
     if(!e&&it.thumb)e=await vec(it.thumb);
     if(!e)throw new Error('unreadable');
     const p=softmax(e,catE),i=argmax(p),r={cat:p[i]>=.4?catNames[i]:'Other',conf:p[i],sub:''};
-    if(r.cat==='Food'){const q=softmax(e,dishE),j=argmax(q);if(q[j]>=.3){r.sub=DISHES[j][0];r.conf=q[j]}}
+    if(subL[r.cat]){const q=softmax(e,subE[r.cat]),j=argmax(q);if(q[j]>=.3){r.sub=subL[r.cat][j][0];r.conf=q[j]}}
     return r;
   }};
   return AI;
@@ -422,7 +433,7 @@ async function runAI(){
 document.addEventListener('change',e=>{
   const t=e.target.closest&&e.target.closest('[data-sel]');if(!t)return;
   const it=S.items.find(i=>i.id===t.dataset.sel);if(!it)return;
-  it.cat=t.value==='Not identified'?'':t.value;if(it.cat!=='Food')it.sub='';it.manual=true;save();render();
+  const old=it.cat;it.cat=t.value==='Not identified'?'':t.value;if(it.cat!==old)it.sub='';it.manual=true;save();render();
 });
 $('#ai').onclick=runAI;
 const drop=$('#drop'),inp=$('#file');
