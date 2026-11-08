@@ -246,7 +246,7 @@ async function addFiles(list){
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 function folderOf(it){
   const d=it.date;
-  if(S.mode==='content'){const c=it.cat||'Not identified';return it.cat==='Food'&&it.sub?{key:'Food: '+it.sub,path:'Food/'+it.sub}:{key:c,path:c}}
+  if(S.mode==='content'){const c=it.cat||'Not identified';return{key:c,path:c}}
   if(S.mode==='camera'){const c=it.cam||'Unknown camera';return{key:c,path:c.replace(/[\\/:*?"<>|]/g,'_')}}
   if(S.mode==='day')return{key:d.slice(0,10),path:d.slice(0,4)+'/'+d.slice(0,10)};
   const m=+d.slice(5,7);return{key:`${MONTHS[m-1]} ${d.slice(0,4)}`,path:d.slice(0,4)+'/'+d.slice(5,7)+' '+MONTHS[m-1]}
@@ -415,7 +415,7 @@ async function runAI(){
       if(i%5===4){save();render()}
       await new Promise(r=>setTimeout(r));
     }
-    S.ai=true;save();render();toast('Done. Open the Content view to see photos by what they show.');
+    S.ai=true;S.mode='content';S.tab='folders';S.open=null;save();render();toast('Done. Your photos are now sorted by what they show.');
   }catch(e){toast('Could not load the AI model. Check your internet connection.')}
   finally{runAI.busy=false;setProg(-1)}
 }
